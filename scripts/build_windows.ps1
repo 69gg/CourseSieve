@@ -47,5 +47,10 @@ uv run --with pyinstaller pyinstaller @pyArgs
 if (Test-Path "LICENSE") {
   Copy-Item "LICENSE" (Join-Path "dist/$AppName" "LICENSE") -Force
 }
+if (Test-Path "README.EXE.md") {
+  Copy-Item "README.EXE.md" (Join-Path "dist/$AppName" "README.md") -Force
+} elseif (Test-Path "README.md") {
+  Copy-Item "README.md" (Join-Path "dist/$AppName" "README.md") -Force
+}
 
 Write-Host "[5/5] Done. Output: dist/$AppName"

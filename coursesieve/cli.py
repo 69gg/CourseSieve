@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import sys
 
 import typer
 from rich import print
@@ -88,7 +89,13 @@ def _run_pipeline(config: RuntimeConfig, target: str, enable_ocr: bool, debug: b
         debug,
     )
     ctx = make_context(config)
-    deps = probe_dependencies(enable_ocr=enable_ocr and target in {"ocr", "fuse", "summarize", "reduce", "export", "run"})
+    vendor_root = _discover_vendor_root()
+    if vendor_root:
+        logger.info("Using vendor binaries from: %s", vendor_root)
+    deps = probe_dependencies(
+        enable_ocr=enable_ocr and target in {"ocr", "fuse", "summarize", "reduce", "export", "run"},
+        vendor_root=vendor_root,
+    )
 
     done: dict[str, dict[str, str]] = {}
 
@@ -196,6 +203,27 @@ def _run_pipeline(config: RuntimeConfig, target: str, enable_ocr: bool, debug: b
     )
     logger.info("Pipeline completed for target=%s", target)
     return done
+
+
+def _discover_vendor_root() -> Path | None:
+    candidates: list[Path] = [Path.cwd() / "vendor"]
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend(
+            [
+                exe_dir / "vendor",
+                exe_dir / "_internal" / "vendor",
+            ]
+        )
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "vendor")
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate.resolve()
+    return None
 
 
 def _print_json(data: object) -> None:
