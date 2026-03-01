@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import logging
+
 from coursesieve.media.timecode import sec_to_hms
 from coursesieve.ocr.cleanup import similar
 from coursesieve.pipeline.run import PipelineContext
 from coursesieve.utils.io import read_json, read_jsonl, write_jsonl
 
+logger = logging.getLogger(__name__)
+
 
 def run_fuse(ctx: PipelineContext) -> dict[str, str]:
     transcript = read_json(ctx.cache.asr_dir / "transcript.json")
     ocr_rows = read_jsonl(ctx.cache.ocr_dir / "ocr.jsonl")
+    logger.info(
+        "Running fuse step: asr_segments=%d ocr_rows=%d delta=%.2fs",
+        len(transcript.get("segments", [])),
+        len(ocr_rows),
+        float(ctx.config.ocr_window_delta_sec),
+    )
 
     fused_rows: list[dict[str, object]] = []
     md_lines: list[str] = []
@@ -17,6 +27,7 @@ def run_fuse(ctx: PipelineContext) -> dict[str, str]:
     min_insert_gap = max(1, int(ctx.config.ocr_change_insert_min)) * 60
     last_insert_time = -1e9
     last_insert_text = ""
+    inserted_screen_blocks = 0
 
     for seg in transcript.get("segments", []):
         start = float(seg["start"])
@@ -38,6 +49,7 @@ def run_fuse(ctx: PipelineContext) -> dict[str, str]:
                 screen_text = matched_texts
                 last_insert_text = head
                 last_insert_time = start
+                inserted_screen_blocks += 1
 
         anchor = sec_to_hms(start)
         fused_rows.append(
@@ -58,4 +70,9 @@ def run_fuse(ctx: PipelineContext) -> dict[str, str]:
     fused_md = ctx.cache.fused_dir / "fused.md"
     write_jsonl(fused_jsonl, fused_rows)
     fused_md.write_text("\n".join(md_lines), encoding="utf-8")
+    logger.info(
+        "Fuse step completed: fused_segments=%d inserted_screen_blocks=%d",
+        len(fused_rows),
+        inserted_screen_blocks,
+    )
     return {"fused_jsonl": str(fused_jsonl), "fused_md": str(fused_md)}

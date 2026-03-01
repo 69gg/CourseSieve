@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from coursesieve.media.timecode import hms_to_sec, sec_to_hms
 from coursesieve.pipeline.run import PipelineContext
 from coursesieve.utils.io import read_json
+
+logger = logging.getLogger(__name__)
 
 
 def _collect_anchors(ctx: PipelineContext) -> list[tuple[str, str]]:
@@ -29,11 +32,13 @@ def _collect_anchors(ctx: PipelineContext) -> list[tuple[str, str]]:
             continue
         seen.add(t)
         deduped.append((t, title))
+    logger.debug("Collected %d anchors (%d deduplicated)", len(anchors), len(deduped))
     return deduped
 
 
 def run_export(ctx: PipelineContext) -> dict[str, str]:
     anchors = _collect_anchors(ctx)
+    logger.info("Running export step with %d anchors", len(anchors))
     source_meta = read_json(ctx.cache.source_dir / "source.json")
     video_path = source_meta.get("video_path", "<video_path>")
 
@@ -66,6 +71,7 @@ def run_export(ctx: PipelineContext) -> dict[str, str]:
 
     index_md.write_text("\n".join(index_lines) + "\n", encoding="utf-8")
     ffmetadata.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+    logger.info("Export outputs written: index=%s chapters=%s", index_md, ffmetadata)
 
     return {
         "index_md": str(index_md),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import logging
 
 from coursesieve.llm.client import OpenAICompatClient
 from coursesieve.llm.prompts import MAP_SYSTEM_PROMPT, build_map_user_prompt
@@ -8,6 +9,8 @@ from coursesieve.llm.schema import ChunkSummary
 from coursesieve.media.timecode import sec_to_hms
 from coursesieve.pipeline.run import PipelineContext
 from coursesieve.utils.io import read_jsonl, write_json
+
+logger = logging.getLogger(__name__)
 
 
 def _chunk_fused(rows: list[dict], chunk_sec: int) -> dict[int, list[dict]]:
@@ -56,6 +59,12 @@ def run_summarize(ctx: PipelineContext) -> dict[str, str]:
     rows = read_jsonl(ctx.cache.fused_dir / "fused.jsonl")
     chunk_sec = max(60, ctx.config.chunk_min * 60)
     chunked = _chunk_fused(rows, chunk_sec)
+    logger.info(
+        "Running summarize step: fused_rows=%d chunk_sec=%d chunks=%d",
+        len(rows),
+        chunk_sec,
+        len(chunked),
+    )
 
     client: OpenAICompatClient | None = None
     if (
@@ -69,6 +78,9 @@ def run_summarize(ctx: PipelineContext) -> dict[str, str]:
             api_key=ctx.config.api_key,
             model=ctx.config.model,
         )
+        logger.info("Summarize step using LLM provider: %s", ctx.config.llm_provider)
+    else:
+        logger.warning("Summarize step running in heuristic mode (LLM not configured)")
 
     index: list[dict[str, object]] = []
     for idx, chunk_rows in chunked.items():
@@ -80,24 +92,29 @@ def run_summarize(ctx: PipelineContext) -> dict[str, str]:
         summary: ChunkSummary
         if client is None:
             summary = _heuristic_summary(chunk_rows)
+            logger.debug("Chunk %03d summarized via heuristic", idx)
         else:
             prompt = build_map_user_prompt(_rows_to_text(chunk_rows))
             last_error = ""
             parsed: ChunkSummary | None = None
-            for _ in range(ctx.config.map_retry + 1):
+            for attempt in range(1, ctx.config.map_retry + 2):
                 try:
+                    logger.debug("Chunk %03d LLM attempt %d", idx, attempt)
                     payload = client.chat_json(system_prompt=MAP_SYSTEM_PROMPT, user_prompt=prompt)
                     parsed = ChunkSummary.model_validate(payload)
                     break
                 except Exception as exc:
                     last_error = str(exc)
+                    logger.warning("Chunk %03d LLM attempt %d failed: %s", idx, attempt, last_error)
             if parsed is None:
                 summary = _heuristic_summary(chunk_rows)
                 summary.uncertain.append(f"LLM parse failed: {last_error[:200]}")
+                logger.warning("Chunk %03d fallback to heuristic summary", idx)
             else:
                 summary = parsed
 
         write_json(chunk_path, summary.model_dump())
+        logger.debug("Chunk summary written: %s", chunk_path)
         index.append(
             {
                 "chunk": idx,
@@ -111,4 +128,5 @@ def run_summarize(ctx: PipelineContext) -> dict[str, str]:
 
     map_index_path = ctx.cache.map_dir / "index.json"
     write_json(map_index_path, index)
+    logger.info("Summarize step completed: map index=%s", map_index_path)
     return {"map_index": str(map_index_path)}

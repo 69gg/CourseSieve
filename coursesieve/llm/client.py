@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+import logging
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -14,6 +17,12 @@ class OpenAICompatClient:
     timeout: float = 120.0
 
     def chat_json(self, system_prompt: str, user_prompt: str) -> dict:
+        logger.debug(
+            "Calling OpenAI-compatible API: base_url=%s model=%s prompt_len=%d",
+            self.base_url,
+            self.model,
+            len(user_prompt),
+        )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -38,4 +47,6 @@ class OpenAICompatClient:
             content = "".join(
                 part.get("text", "") if isinstance(part, dict) else str(part) for part in content
             )
-        return json.loads(content)
+        parsed = json.loads(content)
+        logger.debug("OpenAI-compatible response parsed successfully")
+        return parsed

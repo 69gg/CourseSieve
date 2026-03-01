@@ -29,6 +29,7 @@ def make_context(config: RuntimeConfig) -> PipelineContext:
     cache = CacheLayout(cache_root)
     cache.ensure()
     manifest = ManifestStore(cache.manifest_path)
+    logger.info("Pipeline context prepared: video_id=%s cache=%s", video_id, cache_root)
     return PipelineContext(config=config, video_id=video_id, cache=cache, manifest=manifest)
 
 
@@ -39,6 +40,7 @@ def run_step(
     fn: Callable[[], dict[str, str]],
 ) -> dict[str, str]:
     p_hash = stable_hash(params)
+    logger.debug("[%s] params hash=%s params=%s", step, p_hash, params)
     if ctx.manifest.is_step_fresh(step, p_hash):
         logger.info("[%s] cache hit, skipping", step)
         return ctx.manifest.get_step_outputs(step)
@@ -49,4 +51,5 @@ def run_step(
     duration = time.time() - start
     ctx.manifest.mark_step(step=step, params_hash=p_hash, outputs=outputs, duration_sec=duration)
     logger.info("[%s] done in %.1fs", step, duration)
+    logger.debug("[%s] outputs=%s", step, outputs)
     return outputs

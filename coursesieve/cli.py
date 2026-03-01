@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import typer
@@ -21,6 +22,7 @@ from coursesieve.utils.deps import probe_dependencies
 from coursesieve.utils.logging import setup_logging
 
 app = typer.Typer(help="CourseSieve CLI")
+logger = logging.getLogger(__name__)
 
 
 def _config(
@@ -77,6 +79,14 @@ def _config(
 
 def _run_pipeline(config: RuntimeConfig, target: str, enable_ocr: bool, debug: bool) -> dict[str, dict[str, str]]:
     setup_logging(debug=debug)
+    logger.info(
+        "Starting pipeline: target=%s input=%s out=%s ocr=%s debug=%s",
+        target,
+        config.source_input,
+        config.out_dir,
+        enable_ocr,
+        debug,
+    )
     ctx = make_context(config)
     deps = probe_dependencies(enable_ocr=enable_ocr and target in {"ocr", "fuse", "summarize", "reduce", "export", "run"})
 
@@ -136,6 +146,7 @@ def _run_pipeline(config: RuntimeConfig, target: str, enable_ocr: bool, debug: b
             lambda: run_ocr(ctx, tesseract_cmd=deps.tesseract),
         )
     else:
+        logger.warning("OCR disabled by flag, generating empty OCR output")
         done["ocr"] = {"ocr_jsonl": str(ctx.cache.ocr_dir / "ocr.jsonl")}
         Path(done["ocr"]["ocr_jsonl"]).write_text("", encoding="utf-8")
     if target == "ocr":
@@ -183,6 +194,7 @@ def _run_pipeline(config: RuntimeConfig, target: str, enable_ocr: bool, debug: b
         {"player": config.player},
         lambda: run_export(ctx),
     )
+    logger.info("Pipeline completed for target=%s", target)
     return done
 
 

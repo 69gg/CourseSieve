@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from coursesieve.ocr.cleanup import looks_like_noise, normalize_text, similar
@@ -7,10 +8,14 @@ from coursesieve.ocr.tesseract import ocr_image
 from coursesieve.pipeline.run import PipelineContext
 from coursesieve.utils.io import read_jsonl, write_jsonl
 
+logger = logging.getLogger(__name__)
+
 
 def run_ocr(ctx: PipelineContext, tesseract_cmd: str | None) -> dict[str, str]:
     frames = read_jsonl(ctx.cache.frames_dir / "frames.jsonl")
+    logger.info("Running OCR step on %d frames (lang=%s)", len(frames), ctx.config.ocr_lang)
     raw_rows: list[dict[str, object]] = []
+    noise_filtered = 0
 
     for row in frames:
         frame_path = row["frame_path"]
@@ -21,6 +26,7 @@ def run_ocr(ctx: PipelineContext, tesseract_cmd: str | None) -> dict[str, str]:
         )
         text = normalize_text(text)
         if looks_like_noise(text):
+            noise_filtered += 1
             continue
         raw_rows.append(
             {
@@ -32,15 +38,24 @@ def run_ocr(ctx: PipelineContext, tesseract_cmd: str | None) -> dict[str, str]:
         )
 
     merged: list[dict[str, object]] = []
+    dedup_filtered = 0
     for item in raw_rows:
         if not merged:
             merged.append(item)
             continue
         prev = merged[-1]
         if similar(str(prev["text"]), str(item["text"])):
+            dedup_filtered += 1
             continue
         merged.append(item)
 
     out_path = ctx.cache.ocr_dir / "ocr.jsonl"
     write_jsonl(out_path, merged)
+    logger.info(
+        "OCR step completed: raw=%d noise_filtered=%d dedup_filtered=%d kept=%d",
+        len(frames),
+        noise_filtered,
+        dedup_filtered,
+        len(merged),
+    )
     return {"ocr_jsonl": str(out_path)}

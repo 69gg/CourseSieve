@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from coursesieve.media.timecode import sec_to_hms
 from coursesieve.pipeline.run import PipelineContext
 from coursesieve.utils.io import read_json, write_json
+
+logger = logging.getLogger(__name__)
 
 
 def _collect_chunks(map_index_path: Path) -> list[dict]:
@@ -12,12 +15,14 @@ def _collect_chunks(map_index_path: Path) -> list[dict]:
     chunks: list[dict] = []
     for item in index:
         chunks.append(read_json(Path(item["path"])))
+    logger.debug("Loaded %d map chunk summaries from %s", len(chunks), map_index_path)
     return chunks
 
 
 def run_reduce(ctx: PipelineContext) -> dict[str, str]:
     map_index_path = ctx.cache.map_dir / "index.json"
     chunks = _collect_chunks(map_index_path)
+    logger.info("Running reduce step with %d map chunks", len(chunks))
 
     key_points: list[dict] = []
     exam_points: list[dict] = []
@@ -35,6 +40,16 @@ def run_reduce(ctx: PipelineContext) -> dict[str, str]:
         examples.extend(ch.get("examples", []))
         glossary.extend(ch.get("glossary", []))
         uncertain.extend(ch.get("uncertain", []))
+    logger.info(
+        "Reduce aggregate counts: key_points=%d exam_points=%d formulas=%d patterns=%d examples=%d glossary=%d uncertain=%d",
+        len(key_points),
+        len(exam_points),
+        len(formulas),
+        len(patterns),
+        len(examples),
+        len(glossary),
+        len(uncertain),
+    )
 
     notes_path = ctx.cache.final_dir / "notes.md"
     review_path = ctx.cache.final_dir / "review_checklist.md"
@@ -90,6 +105,14 @@ def run_reduce(ctx: PipelineContext) -> dict[str, str]:
             "uncertain": uncertain,
             "generated_at": sec_to_hms(0),
         },
+    )
+    logger.info(
+        "Reduce outputs written: notes=%s checklist=%s exam=%s anki=%s reduced=%s",
+        notes_path,
+        review_path,
+        exam_path,
+        anki_path,
+        merged_json,
     )
 
     return {
