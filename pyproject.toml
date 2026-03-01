@@ -4,8 +4,9 @@ version = "0.1.0"
 description = "CourseSieve: Turn local/Bilibili lectures into timestamped review notes"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "CourseSieve Contributors" }]
-license = { text = "MIT" }
+authors = [{ name = "Null", email = "pylindex@qq.com" }]
+license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 dependencies = [
   "typer>=0.12.3",
   "rich>=13.7.1",

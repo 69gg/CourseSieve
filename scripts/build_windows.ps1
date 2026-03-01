@@ -34,9 +34,18 @@ if (Test-Path "vendor") {
   $pyArgs += "--add-data"
   $pyArgs += "vendor;vendor"
 }
+if (Test-Path "LICENSE") {
+  # Include license file in onedir output.
+  $pyArgs += "--add-data"
+  $pyArgs += "LICENSE;."
+}
 
 Write-Host "[4/5] Build onedir exe..."
 $pyArgs += $EntryScript
 uv run --with pyinstaller pyinstaller @pyArgs
+
+if (Test-Path "LICENSE") {
+  Copy-Item "LICENSE" (Join-Path "dist/$AppName" "LICENSE") -Force
+}
 
 Write-Host "[5/5] Done. Output: dist/$AppName"
