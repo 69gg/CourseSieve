@@ -51,11 +51,13 @@ def run_reduce(ctx: PipelineContext) -> dict[str, str]:
         len(uncertain),
     )
 
-    notes_path = ctx.cache.final_dir / "notes.md"
-    review_path = ctx.cache.final_dir / "review_checklist.md"
-    exam_path = ctx.cache.final_dir / "exam_points.md"
-    anki_path = ctx.cache.final_dir / "anki.csv"
-    merged_json = ctx.cache.final_dir / "reduced.json"
+    public_final_dir = ctx.config.out_dir / "results" / ctx.video_id / "final"
+    public_final_dir.mkdir(parents=True, exist_ok=True)
+    notes_path = public_final_dir / "notes.md"
+    review_path = public_final_dir / "review_checklist.md"
+    exam_path = public_final_dir / "exam_points.md"
+    anki_path = public_final_dir / "anki.csv"
+    merged_json = public_final_dir / "reduced.json"
 
     notes_lines = ["# 冲刺笔记", ""]
     for i, kp in enumerate(key_points, start=1):

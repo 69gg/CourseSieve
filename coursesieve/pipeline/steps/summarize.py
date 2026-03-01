@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 import logging
+from pathlib import Path
+import time
+from typing import Any
 
 from coursesieve.llm.client import OpenAICompatClient
 from coursesieve.llm.prompts import MAP_SYSTEM_PROMPT, build_map_user_prompt
@@ -11,6 +15,9 @@ from coursesieve.pipeline.run import PipelineContext
 from coursesieve.utils.io import read_jsonl, write_json
 
 logger = logging.getLogger(__name__)
+_MAP_TOOL_NAME = "emit_chunk_summary"
+_MAP_TOOL_DESCRIPTION = "Emit chunk summary strictly following the required schema."
+_MAP_TOOL_SCHEMA = ChunkSummary.model_json_schema()
 
 
 def _chunk_fused(rows: list[dict], chunk_sec: int) -> dict[int, list[dict]]:
@@ -55,15 +62,201 @@ def _rows_to_text(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _is_empty_summary(summary: ChunkSummary) -> bool:
+    return (
+        not summary.key_points
+        and not summary.exam_points
+        and not summary.formulas
+        and not summary.problem_patterns
+        and not summary.examples
+        and not summary.glossary
+        and not summary.uncertain
+    )
+
+
+def _to_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _to_list_str(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            text = _to_str(item)
+            if text:
+                out.append(text)
+        return out
+    text = _to_str(value)
+    return [text] if text else []
+
+
+def _extract_time_anchor(item: dict[str, Any]) -> str:
+    return (
+        _to_str(item.get("time_anchor"))
+        or _to_str(item.get("anchor"))
+        or _to_str(item.get("timestamp"))
+        or "00:00:00"
+    )
+
+
+def _extract_content(item: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        text = _to_str(item.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _normalize_chunk_payload(payload: Any) -> tuple[dict[str, Any], bool]:
+    if not isinstance(payload, dict):
+        return {"uncertain": [f"Unexpected payload type: {type(payload).__name__}"]}, True
+
+    adapted = False
+    normalized: dict[str, Any] = {
+        "key_points": [],
+        "exam_points": [],
+        "formulas": [],
+        "problem_patterns": [],
+        "examples": [],
+        "glossary": [],
+        "uncertain": [],
+    }
+
+    for raw in payload.get("key_points", []):
+        item = raw if isinstance(raw, dict) else {"content": raw}
+        title = _extract_content(item, "title", "content", "point", "text")
+        bullets = _to_list_str(item.get("bullets") or item.get("points") or item.get("details"))
+        if not bullets and title:
+            bullets = [title]
+        normalized["key_points"].append(
+            {
+                "title": title or "未命名要点",
+                "bullets": bullets,
+                "time_anchor": _extract_time_anchor(item),
+            }
+        )
+        if "title" not in item and ("content" in item or "point" in item):
+            adapted = True
+
+    for raw in payload.get("exam_points", []):
+        item = raw if isinstance(raw, dict) else {"content": raw}
+        point = _extract_content(item, "point", "content", "title", "text")
+        normalized["exam_points"].append(
+            {
+                "level": _extract_content(item, "level") or "常考",
+                "point": point or "未命名考点",
+                "time_anchor": _extract_time_anchor(item),
+            }
+        )
+        if "point" not in item and "content" in item:
+            adapted = True
+
+    for raw in payload.get("formulas", []):
+        item = raw if isinstance(raw, dict) else {"content": raw}
+        expr = _extract_content(item, "expr", "formula", "content", "title")
+        meaning = _extract_content(item, "meaning", "explain", "content")
+        normalized["formulas"].append(
+            {
+                "expr": expr or "未命名公式",
+                "meaning": meaning or expr or "待补充",
+                "pitfalls": _extract_content(item, "pitfalls", "warning", "mistakes"),
+                "time_anchor": _extract_time_anchor(item),
+            }
+        )
+        if "expr" not in item and ("formula" in item or "content" in item):
+            adapted = True
+
+    for raw in payload.get("problem_patterns", []):
+        item = raw if isinstance(raw, dict) else {"content": raw}
+        trigger = _extract_content(item, "trigger", "content", "title")
+        method = _extract_content(item, "method", "approach", "content")
+        steps = _to_list_str(item.get("steps") or item.get("procedure"))
+        normalized["problem_patterns"].append(
+            {
+                "trigger": trigger or "未命名题型",
+                "method": method or trigger or "待补充",
+                "steps": steps,
+                "time_anchor": _extract_time_anchor(item),
+            }
+        )
+        if "trigger" not in item and "content" in item:
+            adapted = True
+
+    for raw in payload.get("examples", []):
+        item = raw if isinstance(raw, dict) else {"content": raw}
+        prompt = _extract_content(item, "prompt", "question", "content", "title")
+        solution = _extract_content(item, "skeleton_solution", "solution", "method")
+        normalized["examples"].append(
+            {
+                "prompt": prompt or "未命名例题",
+                "skeleton_solution": solution or "待补充",
+                "time_anchor": _extract_time_anchor(item),
+            }
+        )
+        if "prompt" not in item and "content" in item:
+            adapted = True
+
+    for raw in payload.get("glossary", []):
+        item = raw if isinstance(raw, dict) else {"content": raw}
+        term = _extract_content(item, "term", "title")
+        definition = _extract_content(item, "definition", "content", "desc")
+        if not term and definition:
+            if "：" in definition:
+                maybe_term, maybe_def = definition.split("：", 1)
+            elif ":" in definition:
+                maybe_term, maybe_def = definition.split(":", 1)
+            else:
+                maybe_term, maybe_def = definition[:12], definition
+            term = maybe_term.strip() or "术语"
+            definition = maybe_def.strip() or definition
+            adapted = True
+        normalized["glossary"].append(
+            {
+                "term": term or "术语",
+                "definition": definition or "待补充",
+                "time_anchor": _extract_time_anchor(item),
+            }
+        )
+        if "term" not in item and "content" in item:
+            adapted = True
+
+    for raw in payload.get("uncertain", []):
+        if isinstance(raw, dict):
+            text = _extract_content(raw, "content", "text", "note")
+            if not text:
+                text = json.dumps(raw, ensure_ascii=False)
+            normalized["uncertain"].append(text)
+            adapted = True
+        else:
+            text = _to_str(raw)
+            if text:
+                normalized["uncertain"].append(text)
+
+    return normalized, adapted
+
+
+def _write_debug_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
 def run_summarize(ctx: PipelineContext) -> dict[str, str]:
     rows = read_jsonl(ctx.cache.fused_dir / "fused.jsonl")
     chunk_sec = max(60, ctx.config.chunk_min * 60)
     chunked = _chunk_fused(rows, chunk_sec)
+    debug_dir = ctx.cache.map_dir / "debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
-        "Running summarize step: fused_rows=%d chunk_sec=%d chunks=%d",
+        "Running summarize step: fused_rows=%d chunk_sec=%d chunks=%d map_retry=%d debug_dir=%s",
         len(rows),
         chunk_sec,
         len(chunked),
+        ctx.config.map_retry,
+        debug_dir,
     )
 
     client: OpenAICompatClient | None = None
@@ -88,6 +281,13 @@ def run_summarize(ctx: PipelineContext) -> dict[str, str]:
         end_sec = start_sec + chunk_sec
         chunk_name = f"chunk_{idx:03d}.json"
         chunk_path = ctx.cache.map_dir / chunk_name
+        logger.info(
+            "Summarizing chunk %03d: range=%s-%s rows=%d",
+            idx,
+            sec_to_hms(start_sec),
+            sec_to_hms(end_sec),
+            len(chunk_rows),
+        )
 
         summary: ChunkSummary
         if client is None:
@@ -95,23 +295,84 @@ def run_summarize(ctx: PipelineContext) -> dict[str, str]:
             logger.debug("Chunk %03d summarized via heuristic", idx)
         else:
             prompt = build_map_user_prompt(_rows_to_text(chunk_rows))
+            logger.debug("Chunk %03d prompt length=%d chars", idx, len(prompt))
             last_error = ""
             parsed: ChunkSummary | None = None
             for attempt in range(1, ctx.config.map_retry + 2):
+                t0 = time.time()
                 try:
                     logger.debug("Chunk %03d LLM attempt %d", idx, attempt)
-                    payload = client.chat_json(system_prompt=MAP_SYSTEM_PROMPT, user_prompt=prompt)
-                    parsed = ChunkSummary.model_validate(payload)
+                    payload = client.chat_json_with_tool(
+                        system_prompt=MAP_SYSTEM_PROMPT,
+                        user_prompt=prompt,
+                        tool_name=_MAP_TOOL_NAME,
+                        tool_description=_MAP_TOOL_DESCRIPTION,
+                        tool_schema=_MAP_TOOL_SCHEMA,
+                    )
+                    normalized_payload, adapted = _normalize_chunk_payload(payload)
+                    if adapted:
+                        logger.warning("Chunk %03d applied schema normalization for LLM payload", idx)
+                        logger.debug(
+                            "Chunk %03d normalized payload: %s",
+                            idx,
+                            json.dumps(normalized_payload, ensure_ascii=False),
+                        )
+                    _write_debug_file(
+                        debug_dir / f"chunk_{idx:03d}_attempt_{attempt}_raw_response.json",
+                        json.dumps(client.last_raw_response, ensure_ascii=False, indent=2),
+                    )
+                    _write_debug_file(
+                        debug_dir / f"chunk_{idx:03d}_attempt_{attempt}_normalized_payload.json",
+                        json.dumps(normalized_payload, ensure_ascii=False, indent=2),
+                    )
+                    parsed = ChunkSummary.model_validate(normalized_payload)
+                    logger.info(
+                        "Chunk %03d attempt %d succeeded in %.2fs (finish_reason=%s, tool_calls=%d)",
+                        idx,
+                        attempt,
+                        time.time() - t0,
+                        client.last_finish_reason,
+                        client.last_tool_call_count,
+                    )
                     break
                 except Exception as exc:
                     last_error = str(exc)
-                    logger.warning("Chunk %03d LLM attempt %d failed: %s", idx, attempt, last_error)
+                    _write_debug_file(
+                        debug_dir / f"chunk_{idx:03d}_attempt_{attempt}_raw_response.json",
+                        json.dumps(client.last_raw_response, ensure_ascii=False, indent=2),
+                    )
+                    _write_debug_file(
+                        debug_dir / f"chunk_{idx:03d}_attempt_{attempt}_raw_content.txt",
+                        client.last_raw_content or "",
+                    )
+                    logger.warning(
+                        "Chunk %03d attempt %d failed in %.2fs: %s",
+                        idx,
+                        attempt,
+                        time.time() - t0,
+                        last_error,
+                    )
+                    logger.warning(
+                        "Chunk %03d response meta: id=%s finish_reason=%s tool_calls=%d usage=%s",
+                        idx,
+                        client.last_response_id,
+                        client.last_finish_reason,
+                        client.last_tool_call_count,
+                        json.dumps(client.last_usage, ensure_ascii=False),
+                    )
             if parsed is None:
                 summary = _heuristic_summary(chunk_rows)
                 summary.uncertain.append(f"LLM parse failed: {last_error[:200]}")
                 logger.warning("Chunk %03d fallback to heuristic summary", idx)
             else:
                 summary = parsed
+                if _is_empty_summary(summary):
+                    logger.warning(
+                        "Chunk %03d LLM returned empty summary. raw_content=%s raw_response=%s",
+                        idx,
+                        client.last_raw_content,
+                        json.dumps(client.last_raw_response, ensure_ascii=False),
+                    )
 
         write_json(chunk_path, summary.model_dump())
         logger.debug("Chunk summary written: %s", chunk_path)

@@ -14,13 +14,14 @@
 - B 站 BV/AV/URL/b23 短链（自动调用 `oh-my-bilibili`）
 
 输出（关键文件）：
-- `asr/transcript.srt`
-- `fused/fused.md`
-- `final/notes.md`
-- `final/review_checklist.md`
-- `final/exam_points.md`
-- `final/index.md`
-- `final/chapters.ffmetadata`
+- `out/results/<video_id>/artifacts/transcript.srt`
+- `out/results/<video_id>/artifacts/fused.md`
+- `out/results/<video_id>/final/notes.md`
+- `out/results/<video_id>/final/review_checklist.md`
+- `out/results/<video_id>/final/exam_points.md`
+- `out/results/<video_id>/final/index.md`
+- `out/results/<video_id>/final/chapters.ffmetadata`
+- 最近一次结果快捷入口：`out/results/LATEST.txt`
 
 ## 2. 项目结构
 
@@ -57,8 +58,14 @@ README.md
 Windows 推荐目录（可选）：
 - `vendor/ffmpeg/ffmpeg.exe`
 - `vendor/tesseract/tesseract.exe`
+- `vendor/mpv/mpv.exe`（可选，便于一键跳转回看）
 
 程序会优先使用 `vendor`，找不到再走 `PATH`。
+
+Windows 便携版 `mpv` 建议：
+- 下载 Windows 便携版压缩包（常见来源：`shinchiro/mpv-winbuild-cmake` 的 release）。
+- 解压后把 `mpv.exe` 放到 `vendor/mpv/mpv.exe`。
+- 无需安装，CourseSieve 会自动优先识别该路径。
 
 ## 4. 安装与开发
 
@@ -114,7 +121,7 @@ uv run coursesieve export <input>
 
 ## 7. 断点续跑与缓存
 
-工作目录：
+内部缓存目录（断点续跑用）：
 
 ```text
 <out>/.cache/<video_id>/
@@ -132,6 +139,18 @@ uv run coursesieve export <input>
 - `updated_at`
 
 重跑时，如果参数哈希一致则跳过该步骤。
+
+用户查看结果建议路径：
+
+```text
+<out>/results/<video_id>/
+```
+
+最近一次运行结果路径会写入：
+
+```text
+<out>/results/LATEST.txt
+```
 
 ## 8. 主要参数
 
@@ -156,6 +175,15 @@ uv run coursesieve export <input>
 
 ## 9. 输出说明
 
+### 9.0 推荐查看方式
+先看 `LATEST.txt`：
+
+```bash
+cat out/results/LATEST.txt
+```
+
+然后打开该目录下的 `final/notes.md` 和 `final/index.md`。
+
 ### 9.1 `fused/fused.md`
 融合后的可读语料，格式示例：
 
@@ -171,7 +199,40 @@ uv run coursesieve export <input>
 mpv "<video_path>" --start=HH:MM:SS
 ```
 
-### 9.3 `final/chapters.ffmetadata`
+示例（Markdown）：
+
+```markdown
+# 回看索引
+
+- 勾股定理定义与条件 (00:01:00)
+  - `mpv "/path/to/video.mp4" --start=00:01:00`
+- 考点: 已知两边求第三边 (00:05:51)
+  - `mpv "/path/to/video.mp4" --start=00:05:51`
+```
+
+规则说明：
+- 一级条目：`标题 (HH:MM:SS)`，对应一个可回看锚点。
+- 次行命令：默认生成 `mpv` 跳转命令，便于直接核验原视频。
+- 条目来源：由 `key_points` 与 `exam_points` 合并并按时间排序后去重。
+
+### 9.3 `final/notes.md`
+冲刺笔记按要点编号输出，结构示例：
+
+```markdown
+# 冲刺笔记
+
+## 1. 勾股定理定义
+- 时间: 00:01:00
+- 直角三角形两直角边平方和等于斜边平方。
+- 使用前先确认三角形是否为直角三角形。
+```
+
+规则说明：
+- 二级标题：`## N. {title}`，对应一个总结要点。
+- 固定时间行：`- 时间: HH:MM:SS`，用于快速定位回看。
+- 后续项目符：该要点的 `bullets[]` 内容（可能来自 LLM 或 heuristic）。
+
+### 9.4 `final/chapters.ffmetadata`
 标准 FFMETADATA 章节文件，可供后续封装章节。
 
 ## 10. 与 oh-my-bilibili 集成
@@ -232,6 +293,20 @@ scripts\build_windows.bat
 dist\coursesieve\coursesieve.exe run "BVxxxx" --out .\out --disable-ocr
 ```
 
+### 13.4 Windows 便携 `mpv`（可选）
+
+如果你希望 `final/index.md` 里的跳转命令可直接复制运行，推荐放置：
+
+```text
+vendor/mpv/mpv.exe
+```
+
+放置后可直接使用：
+
+```bat
+vendor\mpv\mpv.exe "D:\video.mp4" --start=00:05:51
+```
+
 ## 14. 本地构建包（sdist + wheel）
 
 ```bash
@@ -254,6 +329,11 @@ uv build
 - 降低温度或换模型。
 - 增加 `--map-retry`。
 - 未配置 LLM 时可先跑 heuristic 验证流程。
+
+5. 没有安装 `mpv` 怎么办
+- 不影响主流程，结果照常生成。
+- 你仍可按 `index.md` 的时间戳在任意播放器手动拖动。
+- Windows 可用便携版：放到 `vendor/mpv/mpv.exe` 即可。
 
 ## 16. 许可证
 

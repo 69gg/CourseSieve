@@ -54,7 +54,16 @@ def transcribe_to_files(
         segments.append(Segment(start=float(seg.start), end=float(seg.end), text=seg.text.strip()))
     logger.info("ASR transcription completed with %d segments", len(segments))
 
-    payload = {"segments": [s.__dict__ for s in segments]}
+    payload = {
+        "segments": [
+            {
+                "start": s.start,
+                "end": s.end,
+                "text": s.text,
+            }
+            for s in segments
+        ]
+    }
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_srt(segments, output_srt)

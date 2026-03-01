@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import shutil
 
 from coursesieve.media.timecode import hms_to_sec, sec_to_hms
 from coursesieve.pipeline.run import PipelineContext
@@ -42,8 +43,13 @@ def run_export(ctx: PipelineContext) -> dict[str, str]:
     source_meta = read_json(ctx.cache.source_dir / "source.json")
     video_path = source_meta.get("video_path", "<video_path>")
 
-    index_md = ctx.cache.final_dir / "index.md"
-    ffmetadata = ctx.cache.final_dir / "chapters.ffmetadata"
+    result_root = ctx.config.out_dir / "results" / ctx.video_id
+    final_dir = result_root / "final"
+    artifacts_dir = result_root / "artifacts"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    index_md = final_dir / "index.md"
+    ffmetadata = final_dir / "chapters.ffmetadata"
 
     index_lines = ["# 回看索引", ""]
     for t, title in anchors:
@@ -73,10 +79,28 @@ def run_export(ctx: PipelineContext) -> dict[str, str]:
     ffmetadata.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     logger.info("Export outputs written: index=%s chapters=%s", index_md, ffmetadata)
 
+    # Also publish key intermediate files in a user-facing folder for quick inspection.
+    copies = {
+        ctx.cache.asr_dir / "transcript.srt": artifacts_dir / "transcript.srt",
+        ctx.cache.fused_dir / "fused.md": artifacts_dir / "fused.md",
+        ctx.cache.map_dir / "index.json": artifacts_dir / "map_index.json",
+    }
+    for src, dst in copies.items():
+        if src.exists():
+            shutil.copy2(src, dst)
+            logger.debug("Published artifact: %s -> %s", src, dst)
+
+    latest_file = ctx.config.out_dir / "results" / "LATEST.txt"
+    latest_file.parent.mkdir(parents=True, exist_ok=True)
+    latest_file.write_text(str(result_root) + "\n", encoding="utf-8")
+    logger.info("Latest result pointer updated: %s", latest_file)
+
     return {
         "index_md": str(index_md),
         "chapters_ffmetadata": str(ffmetadata),
         "video_path": str(video_path),
+        "result_root": str(result_root),
+        "latest_pointer": str(latest_file),
         "anchors": str(len(anchors)),
         "sample_timecode": sec_to_hms(0),
     }
