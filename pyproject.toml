@@ -1,0 +1,52 @@
+[project]
+name = "coursesieve"
+version = "0.1.0"
+description = "CourseSieve: Turn local/Bilibili lectures into timestamped review notes"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "CourseSieve Contributors" }]
+license = { text = "MIT" }
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7.1",
+  "pydantic>=2.8.2",
+  "httpx>=0.27.0",
+  "faster-whisper>=1.0.3",
+  "pytesseract>=0.3.10",
+  "Pillow>=10.4.0",
+  "rapidfuzz>=3.9.6",
+  "oh-my-bilibili>=0.1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.2",
+  "ruff>=0.6.2",
+  "mypy>=1.11.1",
+]
+
+[project.scripts]
+coursesieve = "coursesieve.cli:app"
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["coursesieve"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
